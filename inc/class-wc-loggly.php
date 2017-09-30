@@ -50,7 +50,7 @@ class WC_Loggly extends WC_Integration {
 		$this->token = $this->get_option( 'token' );
 
 		if( ! empty( $this->token ) ) {
-			$this->endpoint = sprintf( 'http://logs-01.loggly.com/inputs/%s/', $this->token );
+			$this->endpoint = sprintf( 'https://logs-01.loggly.com/inputs/%s/', $this->token );
 		}
 	} // End __construct()
 
