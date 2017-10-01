@@ -97,7 +97,7 @@ class WC_Loggly extends WC_Integration {
 
 	public function add_schedule( $schedules ) {
 		$schedules['every2min'] = array(
-			'interval' => 2 * MINUTES_IN_SECONDS,
+			'interval' => 2 * MINUTE_IN_SECONDS,
 			'display' => __('Every 2 minutes')
 		);
 		return $schedules;
