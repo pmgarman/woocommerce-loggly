@@ -31,6 +31,7 @@ define( 'ISO8601U', 'Y-m-d\TH:i:s.uO' );
 
 require_once WC_LOGGLY_PATH . '/vendor/realguids.php';
 require_once WC_LOGGLY_PATH . '/inc/class-wc-loggly-datastore.php';
+require_once WC_LOGGLY_PATH . '/inc/class-wc-loggly-api.php';
 
 register_activation_hook( __FILE__, 'wc_loggly_setup' );
 add_filter( 'woocommerce_integrations', 'wc_loggly_add_integration' );
