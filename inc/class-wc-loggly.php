@@ -138,15 +138,20 @@ class WC_Loggly extends WC_Integration {
 	 * @param  string   $handle  where the log originates from
 	 * @param  string   $message what the log contains
 	 * @param  string   $time    when the log happened. UTC ISO8601 with microseconds, {@see self::get_current_time}
+	 * @param  string   $level   level of log. Debug by default
 	 */
-	private function send( $handle, $message, $time ) {
+	private function send( $handle, $message, $time, $level = 'debug' ) {
 		wp_remote_post( $this->get_endpoint( $handle ), array(
 			'headers' => 'Content-Type: application/json',
 			'body'    => json_encode(
-				array(
+				[
 					'timestamp' => $time, // Include timestamp in ISO 8601 format https://www.loggly.com/docs/automated-parsing/#json
-					'message'   => $message
-				)
+					'log' => [
+						'level' => $level,
+						'handle' => $handle,
+						'message'   => $message,
+					]
+				]
 			)
 		) );
 	}
