@@ -24,6 +24,13 @@ class WC_Loggly extends WC_Integration {
 	private $token    = '';
 
 	/**
+	 * Whether to process the logs synchronously or async
+	 *
+	 * @var boolean
+	 */
+	private $async    = false;
+
+	/**
 	 * The base endpoint URL to be used for API calls.
 	 *
 	 * @var string
@@ -43,14 +50,32 @@ class WC_Loggly extends WC_Integration {
 				'type'        => 'text',
 				'default'     => '',
 				'description' => __( 'Your Loggly customer token to make API calls.', 'woocommerce-loggly' ),
+			),
+			'async' => array(
+				'title'       => __( 'Process in batches?', 'woocommerce-loggly'),
+				'type'        => 'checkbox',
+				'default'     => 'no',
+				'description' => __( 'Whether to collect a lot of logs and send them in batches reducing network calls.', 'woocommerce-loggly' ),
 			)
 		);
 
 		$this->init_settings();
 		$this->token = $this->get_option( 'token' );
+		$this->async = ( 'yes' == $this->get_option( 'async' ) );
 
 		if( ! empty( $this->token ) ) {
 			$this->endpoint = sprintf( 'https://logs-01.loggly.com/inputs/%s/', $this->token );
+			$this->bulk = sprintf( 'https://logs-01.loggly.com/bulk/%s/tag/bulk', $this->token );
+		}
+
+		if ( $this->async ) {
+			if ( ! wp_next_scheduled( 'wc_loggly_drain_queue' ) ) {
+				wp_schedule_event( time(), 'hourly', 'wc_loggly_drain_queue' );
+			}
+
+			add_action( 'wc_loggly_drain_queue', array( $this, 'send_bulk' ) );
+		} else {
+			wp_clear_scheduled_hook( 'wc_loggly_drain_queue' );
 		}
 	} // End __construct()
 
@@ -62,16 +87,76 @@ class WC_Loggly extends WC_Integration {
 	 * @param string $message
 	 */
 	public function add( $handle = '', $message = '' ) {
+		$time = $this->get_current_time();
+
+		if ( $this->async ) {
+			$this->store( $handle, $message, $time );
+		} else {
+			$this->send( $handle, $message, $time );
+		}
+	}
+
+	/**
+	 * We can't use current_time for this because that function uses date(), which will always return 000000.
+	 *
+	 * @see  http://php.net/manual/en/function.date.php
+	 * @return string   an ISO8601 format time string in UTC timezone with microseconds. E.g.: 2017-10-01T15:23:10.974390+0000
+	 */
+	private function get_current_time() {
+		$utc = new DateTimeZone( 'UTC' );
+		$time = new DateTime( 'now', $utc );
+		return $time->format( ISO8601U );
+	}
+
+	/**
+	 * Send a log immediately. This happens when the Async option is not ticked.
+	 *
+	 * @param  string   $handle  where the log originates from
+	 * @param  string   $message what the log contains
+	 * @param  string   $time    when the log happened. UTC ISO8601 with microseconds, {@see self::get_current_time}
+	 */
+	private function send( $handle, $message, $time ) {
 		wp_remote_post( $this->get_endpoint( $handle ), array(
 			'headers' => 'Content-Type: application/json',
 			'body'    => json_encode(
 				array(
-					'timestamp' => current_time( 'c' ), // Include timestamp in ISO 8601 format https://www.loggly.com/docs/automated-parsing/#json
+					'timestamp' => $time, // Include timestamp in ISO 8601 format https://www.loggly.com/docs/automated-parsing/#json
 					'message'   => $message
 				)
 			)
 		) );
+	}
 
+	/**
+	 * Internal method to store logs for later sending.
+	 *
+	 * @param  string   $handle    handle, or source
+	 * @param  string   $message   the log message
+	 * @param  string   $time      time log was recorded, ISO8601 with microseconds, UTC
+	 * @param  string   $level     log level. Null (debug) by default
+	 */
+	private function store( $handle, $message, $time, $level = null ) {
+		global $wpdb;
+		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
+
+		$values = array(
+			'timestamp' => $time,
+			'handle' => $handle,
+			'message' => $message,
+		);
+
+		$format = array(
+			'%s',
+			'%s',
+			'%s',
+		);
+
+		if ( null !== $level ) {
+			$values['level'] = $level;
+			$format[] = '%s';
+		}
+
+		$wpdb->insert( $table, $values, $format );
 	}
 
 	/**
@@ -91,4 +176,91 @@ class WC_Loggly extends WC_Integration {
 		return trailingslashit( $this->endpoint ) . 'tag/' . sanitize_title( $handle );
 	}
 
+	/**
+	 * Sending bulk needs to be line delimited. This practically means that every log entry needs
+	 * to be JSON encoded, which will also turn newlines in the messages to "\n", so that does
+	 * not break sending it.
+	 *
+	 * @uses  RealGUIs\generate_uuid_v4   A UUIDv4 generator by Ryan McCue
+	 *
+	 * @see  https://github.com/rmccue/realguids/  RealGUIs repo
+	 * @see  https://www.loggly.com/docs/http-bulk-endpoint/  Loggly documentation on bulk endpoint
+	 */
+	public function send_bulk() {
+		$uuid = \RealGUIDs\generate_uuid_v4();
+
+		$things_to_send = $this->get_things_to_send( $uuid );
+
+		$to_json = [];
+
+		foreach ($things_to_send as $thing) {
+			$to_json[] = json_encode( [
+				'timestamp' => $thing['timestamp'],
+				'log' => [
+					'level' => $thing['level'],
+					'handle' => $thing['handle'],
+					'message' => $thing['message'],
+				]
+			] );
+		}
+
+		$payload = array(
+			'headers' => 'content-type:text/plain',
+			'body'    => implode( PHP_EOL, $to_json ),
+		);
+
+		$response = wp_remote_post( $this->bulk, $payload );
+
+
+		if ( ! is_wp_error( $response ) ) {
+			$this->delete_logs( $uuid );
+			return;
+		}
+		$this->rollback_logs( $uuid );
+	}
+
+	/**
+	 * Gets a uuid, selects the first 100 that aren't claimed yet, and returns it. Uses an update-select
+	 * so there's a table lock on update, which protects against race conditions.
+	 *
+	 * @param  string   $uuid   uuid used for logs
+	 */
+	private function get_things_to_send( $uuid ) {
+		global $wpdb;
+		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
+
+		// lock them in
+		$update = $wpdb->prepare( "UPDATE {$table} SET `claim` = %s WHERE `claim` IS NULL LIMIT 100;", $uuid );
+		$wpdb->query( $update );
+
+		// grab them
+		return $wpdb->get_results( $wpdb->prepare( "
+			SELECT * FROM {$table} WHERE `claim` = %s
+		", $uuid ), ARRAY_A );
+	}
+
+	/**
+	 * Deletes logs with specified claim id after a successful send.
+	 *
+	 * @param  string   $uuid    uuid used for the logs
+	 */
+	private function delete_logs( $uuid ) {
+		global $wpdb;
+		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
+
+		$wpdb->delete( $table, ['claim' => $uuid], ['%s'] );
+	}
+
+	/**
+	 * Removes the claim from the logs following an unsuccessful log transmit.
+	 *
+	 * @param  string    $uuid   uuid used for the logs
+	 */
+	private function rollback_logs( $uuid ) {
+		global $wpdb;
+		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
+
+		$update = $wpdb->prepare( "UPDATE {$table} SET `claim` = NULL WHERE `claim` = %s;", $uuid );
+		$wpdb->query( $update );
+	}
 }

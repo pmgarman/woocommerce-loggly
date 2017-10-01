@@ -26,6 +26,11 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit; // Exit if accessed directly
 
+define( 'WC_LOGGLY_PATH', dirname( __FILE__ ) );
+define( 'WC_LOGGLY_TABLENAME', 'wc_loggly_queued_logs' );
+
+require_once WC_LOGGLY_PATH . '/vendor/realguids.php';
+
 /**
  * Add the Loggly integration to WooCommerce
  *
@@ -41,3 +46,34 @@ function wc_loggly_add_integration( $integrations = array() ) {
 	return $integrations;
 }
 add_filter( 'woocommerce_integrations', 'wc_loggly_add_integration' );
+
+register_activation_hook( __FILE__, 'wc_loggly_setup' );
+
+function wc_loggly_setup() {
+	global $wpdb;
+	require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+
+	dbDelta( wc_loggly_schema() );
+}
+
+
+function wc_loggly_schema() {
+	global $wpdb;
+	$table = WC_LOGGLY_TABLENAME;
+	return "
+		CREATE TABLE {$wpdb->prefix}{$table} (
+		`id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+		`timestamp` VARCHAR(31) NOT NULL,
+		`level` ENUM('debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency') NOT NULL DEFAULT 'debug',
+		`handle` VARCHAR(191),
+		`message` LONGTEXT NOT NULL,
+		`claim` VARCHAR(36),
+		UNIQUE `id`(`id`),
+		KEY `handle` (`handle`),
+		KEY `timestamp` (`timestamp`),
+		KEY `level` (`level`)
+	) {$wpdb->get_charset_collate()}";
+}
+
+const ISO8601U = 'Y-m-d\TH:i:s.uO';
+
