@@ -37,6 +37,20 @@ class WC_Loggly extends WC_Integration {
 	 */
 	private $endpoint = '';
 
+	/**
+	 * Bulk endpoint for loggly
+	 *
+	 * @var string
+	 */
+	private $bulk     = '';
+
+	/**
+	 * Datastore class
+	 *
+	 * @var null
+	 */
+	private $datastore = null;
+
 	public function __construct() {
 		$this->method_title = __( 'Loggly', 'woocommerce-loggly' );
 		$this->method_description = __( 'Taps into WC_Logger and sends WooCommerce log data to Loggly.', 'woocommerce-loggly' );
@@ -62,6 +76,7 @@ class WC_Loggly extends WC_Integration {
 		$this->init_settings();
 		$this->token = $this->get_option( 'token' );
 		$this->async = ( 'yes' == $this->get_option( 'async' ) );
+		$this->datastore  = WC_Loggly_DataStoreFactory::create();
 
 		if( ! empty( $this->token ) ) {
 			$this->endpoint = sprintf( 'https://logs-01.loggly.com/inputs/%s/', $this->token );
@@ -90,7 +105,7 @@ class WC_Loggly extends WC_Integration {
 		$time = $this->get_current_time();
 
 		if ( $this->async ) {
-			$this->store( $handle, $message, $time );
+			$this->datastore->store( $handle, $message, $time );
 		} else {
 			$this->send( $handle, $message, $time );
 		}
@@ -128,38 +143,6 @@ class WC_Loggly extends WC_Integration {
 	}
 
 	/**
-	 * Internal method to store logs for later sending.
-	 *
-	 * @param  string   $handle    handle, or source
-	 * @param  string   $message   the log message
-	 * @param  string   $time      time log was recorded, ISO8601 with microseconds, UTC
-	 * @param  string   $level     log level. Null (debug) by default
-	 */
-	private function store( $handle, $message, $time, $level = null ) {
-		global $wpdb;
-		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
-
-		$values = array(
-			'timestamp' => $time,
-			'handle' => $handle,
-			'message' => $message,
-		);
-
-		$format = array(
-			'%s',
-			'%s',
-			'%s',
-		);
-
-		if ( null !== $level ) {
-			$values['level'] = $level;
-			$format[] = '%s';
-		}
-
-		$wpdb->insert( $table, $values, $format );
-	}
-
-	/**
 	 * Using the handle and token generate an API endpoint URL which uses the handle to create a tag.
 	 *
 	 * A handle is required by WC_Logger, so if somehow we do not get one here we will tag as generic woocommerce.
@@ -189,7 +172,7 @@ class WC_Loggly extends WC_Integration {
 	public function send_bulk() {
 		$uuid = \RealGUIDs\generate_uuid_v4();
 
-		$things_to_send = $this->get_things_to_send( $uuid );
+		$things_to_send = $this->datastore->get_things_to_send( $uuid );
 
 		$to_json = [];
 
@@ -211,56 +194,10 @@ class WC_Loggly extends WC_Integration {
 
 		$response = wp_remote_post( $this->bulk, $payload );
 
-
 		if ( ! is_wp_error( $response ) ) {
-			$this->delete_logs( $uuid );
+			$this->datastore->delete_logs( $uuid );
 			return;
 		}
-		$this->rollback_logs( $uuid );
-	}
-
-	/**
-	 * Gets a uuid, selects the first 100 that aren't claimed yet, and returns it. Uses an update-select
-	 * so there's a table lock on update, which protects against race conditions.
-	 *
-	 * @param  string   $uuid   uuid used for logs
-	 */
-	private function get_things_to_send( $uuid ) {
-		global $wpdb;
-		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
-
-		// lock them in
-		$update = $wpdb->prepare( "UPDATE {$table} SET `claim` = %s WHERE `claim` IS NULL LIMIT 100;", $uuid );
-		$wpdb->query( $update );
-
-		// grab them
-		return $wpdb->get_results( $wpdb->prepare( "
-			SELECT * FROM {$table} WHERE `claim` = %s
-		", $uuid ), ARRAY_A );
-	}
-
-	/**
-	 * Deletes logs with specified claim id after a successful send.
-	 *
-	 * @param  string   $uuid    uuid used for the logs
-	 */
-	private function delete_logs( $uuid ) {
-		global $wpdb;
-		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
-
-		$wpdb->delete( $table, ['claim' => $uuid], ['%s'] );
-	}
-
-	/**
-	 * Removes the claim from the logs following an unsuccessful log transmit.
-	 *
-	 * @param  string    $uuid   uuid used for the logs
-	 */
-	private function rollback_logs( $uuid ) {
-		global $wpdb;
-		$table = $wpdb->prefix . WC_LOGGLY_TABLENAME;
-
-		$update = $wpdb->prepare( "UPDATE {$table} SET `claim` = NULL WHERE `claim` = %s;", $uuid );
-		$wpdb->query( $update );
+		$this->datastore->rollback_logs( $uuid );
 	}
 }
