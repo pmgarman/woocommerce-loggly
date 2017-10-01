@@ -57,6 +57,7 @@ class WC_Loggly extends WC_Integration {
 
 		add_action( 'woocommerce_update_options_integration_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'woocommerce_log_add', array( $this, 'add' ), 10, 2 );
+		add_filter( 'cron_schedules', array( $this, 'add_schedule' ) );
 
 		$this->form_fields = array(
 			'token' => array(
@@ -85,7 +86,7 @@ class WC_Loggly extends WC_Integration {
 
 		if ( $this->async ) {
 			if ( ! wp_next_scheduled( 'wc_loggly_drain_queue' ) ) {
-				wp_schedule_event( time(), 'hourly', 'wc_loggly_drain_queue' );
+				wp_schedule_event( time(), 'every2min', 'wc_loggly_drain_queue' );
 			}
 
 			add_action( 'wc_loggly_drain_queue', array( $this, 'send_bulk' ) );
@@ -93,6 +94,14 @@ class WC_Loggly extends WC_Integration {
 			wp_clear_scheduled_hook( 'wc_loggly_drain_queue' );
 		}
 	} // End __construct()
+
+	public function add_schedule( $schedules ) {
+		$schedules['every2min'] = array(
+			'interval' => 2 * MINUTES_IN_SECONDS,
+			'display' => __('Every 2 minutes')
+		);
+		return $schedules;
+	}
 
 	/**
 	 * Hook into WC_Logger and send log data to Loggy. Tagging the logs with the handle, and sending the timestamp &
