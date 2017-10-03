@@ -26,6 +26,16 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit; // Exit if accessed directly
 
+define( 'WC_LOGGLY_PATH', dirname( __FILE__ ) );
+define( 'ISO8601U', 'Y-m-d\TH:i:s.uO' );
+
+require_once WC_LOGGLY_PATH . '/vendor/realguids.php';
+require_once WC_LOGGLY_PATH . '/inc/class-wc-loggly-datastore.php';
+require_once WC_LOGGLY_PATH . '/inc/class-wc-loggly-api.php';
+
+register_activation_hook( __FILE__, 'wc_loggly_setup' );
+add_filter( 'woocommerce_integrations', 'wc_loggly_add_integration' );
+
 /**
  * Add the Loggly integration to WooCommerce
  *
@@ -34,10 +44,32 @@ if ( ! defined( 'ABSPATH' ) ) exit; // Exit if accessed directly
  * @return array
  */
 function wc_loggly_add_integration( $integrations = array() ) {
-	require_once 'inc/class-wc-loggly.php';
+	require_once WC_LOGGLY_PATH . '/inc/class-wc-loggly.php';
 
 	$integrations[] = 'WC_Loggly';
 
 	return $integrations;
 }
-add_filter( 'woocommerce_integrations', 'wc_loggly_add_integration' );
+
+/**
+ * Factory to return the shared instance of the datastore.
+ */
+final class WC_Loggly_DataStoreFactory {
+	public static function create() {
+        static $plugin = null;
+
+		if ( null === $plugin ) {
+			$plugin = new WC_Loggly_Datastore();
+		}
+
+		return $plugin;
+	}
+}
+
+/**
+ * Utility function so we can create the database table on activation.
+ */
+function wc_loggly_setup() {
+	$ds = WC_Loggly_DataStoreFactory::create();
+	$ds->init();
+}
