@@ -159,11 +159,9 @@ class WC_Loggly extends WC_Integration {
 		foreach ($things_to_send as $thing) {
 			$to_json[] = json_encode( [
 				'timestamp' => $thing['timestamp'],
-				'log' => [
-					'level' => $thing['level'],
-					'handle' => $thing['handle'],
-					'message' => $thing['message'],
-				]
+				'level' => $thing['level'],
+				'handle' => $thing['handle'],
+				'message' => $thing['message'],
 			] );
 		}
 

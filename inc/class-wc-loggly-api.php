@@ -24,11 +24,9 @@ class WC_Loggly_API {
 			'body'    => json_encode(
 				[
 					'timestamp' => $time, // Include timestamp in ISO 8601 format https://www.loggly.com/docs/automated-parsing/#json
-					'log' => [
-						'level' => $level,
-						'handle' => $handle,
-						'message'   => $message,
-					]
+					'level' => $level,
+					'handle' => $handle,
+					'message'   => $message,
 				]
 			)
 		) );
