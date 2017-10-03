@@ -71,7 +71,7 @@ class WC_Loggly_Datastore {
 		global $wpdb;
 
 		// lock them in
-		$update = $wpdb->prepare( "UPDATE {$this->table} SET `claim` = %s WHERE `claim` IS NULL LIMIT 100;", $uuid );
+		$update = $wpdb->prepare( "UPDATE {$this->table} SET `claim` = %s WHERE `claim` IS NULL LIMIT 1000;", $uuid );
 		$wpdb->query( $update );
 
 		// grab them
